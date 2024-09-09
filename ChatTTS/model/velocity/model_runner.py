@@ -467,34 +467,13 @@ class ModelRunner:
         )
         # print(sampling_metadata.seq_data)
         seq_groups = []
-        input_tokens_history = []
         for i, rtn in enumerate(sampling_metadata.seq_groups):
             seq_groups.append(rtn[0][0])
-            tokens_history = sampling_metadata.seq_data[rtn[0][0]].output_token_ids
-            if len(tokens_history) >= 1:
-                if len(tokens_history[0]) == 1:
-                    tokens_history = [token[0] for token in tokens_history]
-                else:
-                    tokens_history = [list(token) for token in tokens_history]
-            input_tokens_history.append(tokens_history)
-        input_tokens_history = torch.tensor(input_tokens_history).to(
-            input_tokens.device
-        )
-        # token_ids = rtn.outputs[0].token_ids
-        # for j, token_id in enumerate(token_ids):
-        #     if len(token_id) == 1:
-        #         token_ids[j] = token_id[0]
-        #     else:
-        #         token_ids[j] = list(token_id)
 
         # Execute the model.
-        # print("it1",input_tokens)
         if len(input_tokens.shape) == 2:
             input_tokens = input_tokens.unsqueeze(2).repeat(1, 1, 4)
-        if len(input_tokens_history.shape) == 2:
-            input_tokens_history = input_tokens_history.unsqueeze(2).repeat(1, 1, 4)
-        # print(input_tokens_history.shape)
-        # print("it2",input_tokens.shape)
+
         text_mask = input_tokens != 0
         text_mask = text_mask[:, :, 0]
 
@@ -526,13 +505,13 @@ class ModelRunner:
                     for i in range(self.post_model.num_vq)
                 ]
                 input_emb = torch.stack(code_emb, 3).sum(3)
-                start_idx = (
-                    input_tokens_history.shape[-2] - 1
-                    if input_tokens_history.shape[-2] > 0
-                    else 0
-                )
         else:
-            input_emb = self.post_model(input_tokens, text_mask)
+            speaker_embedding_param = seq_group_metadata_list[0].speaker_embedding_param
+            input_emb = (
+                speaker_embedding_param
+                if speaker_embedding_param is not None
+                else self.post_model(input_tokens, text_mask)
+            )
         # print(input_emb.shape)
         hidden_states = model_executable(
             input_emb=input_emb,
@@ -542,15 +521,10 @@ class ModelRunner:
         )
         # print(hidden_states.shape)
         # print(input_tokens)
-        B_NO_PAD = input_tokens_history.shape[0]
-        input_tokens = input_tokens[:B_NO_PAD, :, :]
-        hidden_states = hidden_states[:B_NO_PAD, :, :]
+        input_tokens = input_tokens[:, :, :]
+        hidden_states = hidden_states[:, :, :]
         idx_next, logprob, finish = self.sampler.sample(
-            inputs_ids=(
-                input_tokens
-                if input_tokens_history.shape[-2] == 0
-                else input_tokens_history
-            ),
+            inputs_ids=(input_tokens),
             hidden_states=hidden_states,
             infer_text=infer_text,
             temperature=temperture,
@@ -618,6 +592,7 @@ class ModelRunner:
                 is_prompt=True,
                 seq_data={group_id: seq_data},
                 sampling_params=sampling_params,
+                speaker_embedding_param=None,
                 block_tables=None,
             )
             seqs.append(seq)

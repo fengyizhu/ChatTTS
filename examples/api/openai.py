@@ -18,7 +18,6 @@ from typing import Optional, AsyncGenerator
 import ChatTTS
 
 from tools.logger import get_logger
-import torch
 
 
 from pydantic import BaseModel
@@ -35,7 +34,7 @@ async def startup_event():
 
     chat = ChatTTS.Chat(get_logger("ChatTTS"))
     logger.info("Initializing ChatTTS...")
-    if chat.load():
+    if chat.load(use_vllm=True):
         logger.info("Models loaded successfully.")
     else:
         logger.error("Models load failed.")
@@ -43,10 +42,11 @@ async def startup_event():
 
 
 class ChatTTSParams(BaseModel):
-    text: list[str]
+    input: str
     stream: bool = False
     lang: Optional[str] = None
-    skip_refine_text: bool = False
+    voice: Optional[str] = None
+    skip_refine_text: bool = True
     refine_text_only: bool = False
     use_decoder: bool = True
     do_text_normalization: bool = True
@@ -56,31 +56,13 @@ class ChatTTSParams(BaseModel):
     stream_batch_size: int = 16
 
 
-@app.post("/generate_voice")
-async def generate_voice(params: ChatTTSParams):
-    logger.info("Text input: %s", str(params.text))
-
-    # audio seed
-    if params.params_infer_code.manual_seed is not None:
-        torch.manual_seed(params.params_infer_code.manual_seed)
-        params.params_infer_code.spk_emb = chat.sample_random_speaker()
-
-    # text seed for text refining
-    if params.params_refine_text and params.skip_refine_text is False:
-        results_generator = chat.infer(
-            text=params.text, skip_refine_text=False, refine_text_only=True
-        )
-        text = await next(results_generator)
-        logger.info(f"Refined text: {text}")
-    else:
-        # no text refining
-        text = params.text
-
+@app.post("/v1/audio/speech")
+async def speech(params: ChatTTSParams):
+    logger.info("Text input: %s", str(params.input))
+    text = [params.input]
     logger.info("Use speaker:")
     logger.info(params.params_infer_code.spk_emb)
-
     logger.info("Start voice inference.")
-
     results_generator = chat.infer(
         text=text,
         stream=params.stream,

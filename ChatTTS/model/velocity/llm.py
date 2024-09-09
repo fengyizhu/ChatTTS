@@ -4,8 +4,8 @@ from tqdm import tqdm
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 from vllm.utils import Counter
 
+from .async_llm_engine import AsyncLLMEngine
 from .configs import EngineArgs
-from .llm_engine import LLMEngine
 from .output import RequestOutput
 from .sampling_params import SamplingParams
 
@@ -107,7 +107,7 @@ class LLM:
             num_text_tokens=num_text_tokens,
             **kwargs,
         )
-        self.llm_engine = LLMEngine.from_engine_args(engine_args, post_model_path)
+        self.llm_engine = AsyncLLMEngine.from_engine_args(engine_args, post_model_path)
         self.request_counter = Counter()
 
     def get_tokenizer(self) -> Union[PreTrainedTokenizer, PreTrainedTokenizerFast]:
@@ -168,7 +168,7 @@ class LLM:
             token_ids = None if prompt_token_ids is None else prompt_token_ids[i]
             self._add_request(prompt, sampling_params, token_ids)
 
-        rtns = self._run_engine(use_tqdm)
+        rtns = self.llm_engine.engine_step()
         for i, rtn in enumerate(rtns):
             token_ids = rtn.outputs[0].token_ids
             for j, token_id in enumerate(token_ids):
