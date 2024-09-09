@@ -35,7 +35,7 @@ async def startup_event():
 
     chat = ChatTTS.Chat(get_logger("ChatTTS"))
     logger.info("Initializing ChatTTS...")
-    if chat.load():
+    if chat.load(use_vllm=True):
         logger.info("Models loaded successfully.")
     else:
         logger.error("Models load failed.")

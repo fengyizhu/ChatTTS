@@ -68,6 +68,7 @@ class GPT(nn.Module):
                 num_audio_tokens=self.num_audio_tokens,
                 num_text_tokens=self.num_text_tokens,
                 post_model_path=embed_file_path,
+                dtype="float32"
             )
             self.logger.info("vLLM model loaded")
             return
