@@ -308,7 +308,7 @@ class GPT(nn.Module):
         )
 
     @torch.no_grad()
-    def generate(
+    async def generate(
         self,
         emb: torch.Tensor,
         inputs_ids: torch.Tensor,

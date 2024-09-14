@@ -188,7 +188,7 @@ class Chat:
         stream_speed: int = 12000
         pass_first_n_batches: int = 2
 
-    def infer(
+    async def infer(
         self,
         text,
         stream=False,
@@ -202,7 +202,7 @@ class Chat:
         params_infer_code=InferCodeParams(),
     ):
         self.context.set(False)
-        res_gen = self._infer(
+        return self._infer(
             text,
             stream,
             lang,
@@ -214,10 +214,6 @@ class Chat:
             params_refine_text,
             params_infer_code,
         )
-        if stream:
-            return res_gen
-        else:
-            return next(res_gen)
 
     def interrupt(self):
         self.context.set(True)
@@ -339,7 +335,7 @@ class Chat:
 
         return self.has_loaded()
 
-    def _infer(
+    async def _infer(
         self,
         text,
         stream=False,
@@ -387,7 +383,7 @@ class Chat:
         if stream:
             length = 0
             pass_batch_count = 0
-        for result in self._infer_code(
+        async for result in self._infer_code(
             text,
             stream,
             self.device,
@@ -457,7 +453,7 @@ class Chat:
         return wavs
 
     @torch.no_grad()
-    def _infer_code(
+    async def _infer_code(
         self,
         text: Tuple[List[str], str],
         stream: bool,
@@ -535,7 +531,7 @@ class Chat:
 
             del text_mask, input_ids
 
-            return [
+            yield [
                 GPT.GenerationOutputs(
                     ids=token_ids,
                     hiddens=hidden_states,
@@ -577,7 +573,18 @@ class Chat:
 
         del emb, input_ids
 
-        return result
+        token_ids = []
+        hidden_states = []
+        async for i in result:
+            token_ids.extend(i.ids)
+            hidden_states.extend(i.hiddens)
+
+        yield GPT.GenerationOutputs(
+                    ids=token_ids,
+                    hiddens=hidden_states,
+                    attentions=[],
+                )
+
 
     @torch.no_grad()
     def _refine_text(

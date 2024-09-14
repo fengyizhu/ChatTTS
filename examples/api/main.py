@@ -52,7 +52,7 @@ class ChatTTSParams(BaseModel):
     use_decoder: bool = True
     do_text_normalization: bool = True
     do_homophone_replacement: bool = False
-    params_refine_text: ChatTTS.Chat.RefineTextParams
+    params_refine_text: Optional[ChatTTS.Chat.RefineTextParams] = None
     params_infer_code: ChatTTS.Chat.InferCodeParams
 
 
@@ -79,7 +79,7 @@ async def generate_voice(params: ChatTTSParams):
     logger.info(params.params_infer_code.spk_emb)
 
     logger.info("Start voice inference.")
-    wavs = chat.infer(
+    wavs = await chat.infer(
         text=text,
         stream=params.stream,
         lang=params.lang,
@@ -97,8 +97,10 @@ async def generate_voice(params: ChatTTSParams):
     with zipfile.ZipFile(
         buf, "a", compression=zipfile.ZIP_DEFLATED, allowZip64=False
     ) as f:
-        for idx, wav in enumerate(wavs):
-            f.writestr(f"{idx}.mp3", pcm_arr_to_mp3_view(wav))
+        async for wav in wavs:
+            for i in range(len(wav)):
+                f.writestr(f"{i}.mp3", pcm_arr_to_mp3_view(wav[i]))
+            f.writestr(f"1.mp3", pcm_arr_to_mp3_view(wav))
     logger.info("Audio generation successful.")
     buf.seek(0)
 
