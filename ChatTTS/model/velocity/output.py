@@ -32,6 +32,7 @@ class CompletionOutput:
         logprobs: Optional[SampleLogprobs],
         finish_reason: Optional[str] = None,
         hidden_states: Optional[torch.Tensor] = None,
+        revert_mode: Optional[bool] = False,
     ) -> None:
         self.index = index
         self.text = text
@@ -40,6 +41,7 @@ class CompletionOutput:
         self.logprobs = logprobs
         self.finish_reason = finish_reason
         self.hidden_states = hidden_states
+        self.revert_mode = revert_mode
 
     def finished(self) -> bool:
         return self.finish_reason is not None
@@ -76,12 +78,14 @@ class RequestOutput:
         prompt_logprobs: Optional[PromptLogprobs],
         outputs: List[CompletionOutput],
         finished: bool,
+        revert_mode: Optional[bool],
     ) -> None:
         self.request_id = request_id
         self.prompt = prompt
         self.prompt_token_ids = prompt_token_ids
         self.prompt_logprobs = prompt_logprobs
         self.outputs = outputs
+        self.revert_mode = revert_mode
         self.finished = finished
 
     @classmethod
@@ -116,6 +120,7 @@ class RequestOutput:
                 logprobs,
                 finshed_reason,
                 seq.data.hidden_states,
+                seq_group.revert_mode,
             )
             outputs.append(output)
 
@@ -131,6 +136,7 @@ class RequestOutput:
             prompt_logprobs,
             outputs,
             finished,
+            seq_group.revert_mode
         )
 
     def __repr__(self) -> str:

@@ -58,23 +58,23 @@ class Embed(nn.Module):
         device = next(self.parameters()).device
         emb_text: torch.Tensor = self.emb_text(
             input_ids[text_mask].narrow(1, 0, 1).squeeze_(1).to(device)
-        )
+        ).to(torch.float32)
 
         text_mask_inv = text_mask.logical_not().to(device)
         masked_input_ids: torch.Tensor = input_ids[text_mask_inv].to(device)
 
         emb_code = [
-            self.emb_code[i](masked_input_ids[:, i]) for i in range(self.num_vq)
+            self.emb_code[i](masked_input_ids[:, i]).to(torch.float32) for i in range(self.num_vq)
         ]
         emb_code = torch.stack(emb_code, 2).sum(2)
 
         emb = torch.zeros(
             (input_ids.shape[:-1]) + (emb_text.shape[-1],),
             device=emb_text.device,
-            dtype=emb_text.dtype,
+            dtype=torch.float32,
         )
         emb[text_mask] = emb_text
-        emb[text_mask_inv] = emb_code.to(emb.dtype)
+        emb[text_mask_inv] = emb_code
 
         del emb_text, emb_code, text_mask_inv
 

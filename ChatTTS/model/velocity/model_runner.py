@@ -23,6 +23,7 @@ from .sequence import (
     SequenceOutput,
 )
 from vllm.utils import in_wsl
+
 from ..embed import Embed
 from .sampler import Sampler
 from safetensors.torch import safe_open
@@ -77,6 +78,8 @@ class ModelRunner:
         self.graph_block_tables = None  # Set after initial profiling.
         # cache in_wsl result
         self.in_wsl = in_wsl()
+
+        self.time = dict({})
 
     def load_model(self) -> None:
         self.model = get_model(self.model_config)
@@ -469,10 +472,25 @@ class ModelRunner:
         seq_group_metadata_list: Optional[List[SequenceGroupMetadata]],
         kv_caches: List[Tuple[torch.Tensor, torch.Tensor]],
     ) -> Optional[SamplerOutput]:
+        revert_mode = {}
+        seq_group = {}
+        cache_token_ids_group = {}
+        for i in seq_group_metadata_list:
+            for j in i.seq_data:
+                seq = i.seq_data[j]
+                seq_group[j] = seq
+                cache_token_ids = i.cache_token_ids
+                cache_token_ids_group[j] = cache_token_ids
+                if i.is_prompt == False and cache_token_ids is not None and 0 < len(seq.output_token_ids) <= len(cache_token_ids):
+                    revert_mode[j] = True
+                elif i.is_prompt == True and cache_token_ids is not None and 0 < len(cache_token_ids) :
+                    revert_mode[j] = True
+                else:
+                    revert_mode[j] = False
+
         input_tokens, input_positions, input_metadata, sampling_metadata, speaker_embedding = (
             self.prepare_input_tensors(seq_group_metadata_list)
         )
-        # print(sampling_metadata.seq_data)
         seq_groups = []
         for i, rtn in enumerate(sampling_metadata.seq_groups):
             seq_groups.append(rtn[0][0])
@@ -500,10 +518,10 @@ class ModelRunner:
         # print(logits_processors, logits_warpers)
         min_new_token = sampling_metadata.seq_groups[0][1].min_new_token
         eos_token = sampling_metadata.seq_groups[0][1].eos_token
-        start_idx = sampling_metadata.seq_groups[0][1].start_idx
+        start_idx = input_tokens[0].shape[0]
         if input_tokens.shape[-2] == 1:
             if infer_text:
-                input_emb: torch.Tensor = self.post_model.emb_text(
+                speaker_embedding_params: torch.Tensor = self.post_model.emb_text(
                     input_tokens[:, :, 0]
                 )
             else:
@@ -511,7 +529,7 @@ class ModelRunner:
                     self.post_model.emb_code[i](input_tokens[:, :, i])
                     for i in range(self.post_model.num_vq)
                 ]
-                input_emb = torch.stack(code_emb, 3).sum(3)
+                speaker_embedding_params = torch.stack(code_emb, 3).sum(3)
         else:
             # 通过for循环，拼接成一个tensor
             if seq_group_metadata_list[0].speaker_embedding_param is not None:
@@ -524,47 +542,58 @@ class ModelRunner:
 
             else:
                 speaker_embedding_params = self.post_model(input_tokens, text_mask)
-
-            input_emb = (
-                speaker_embedding_params if speaker_embedding_params is not None else self.post_model(input_tokens, text_mask)
-            )
-
-        # print(input_emb.shape)
         hidden_states = model_executable(
-            input_emb=input_emb,
+            input_emb=speaker_embedding_params,
             positions=input_positions,
             kv_caches=kv_caches,
             input_metadata=input_metadata,
         )
-        # print(hidden_states.shape)
-        # print(input_tokens)
-        input_tokens = input_tokens[:, :, :]
-        hidden_states = hidden_states[:, :, :]
-        idx_next, logprob, finish = self.sampler.sample(
-            inputs_ids=(input_tokens),
-            hidden_states=hidden_states,
-            infer_text=infer_text,
-            temperature=temperture,
-            logits_processors=logits_processors,
-            logits_warpers=logits_warpers,
-            min_new_token=min_new_token,
-            now_length=1,
-            eos_token=eos_token,
-            start_idx=start_idx,
-        )
-        # print(logprob.shape, idx_next.shape)
-        if len(logprob.shape) == 2:
-            logprob = logprob[:, None, :]
-        logprob = torch.gather(logprob, -1, idx_next.transpose(-1, -2))[:, :, 0]
-        # print("测试",idx_next.shape, logprob.shape)
-        # Sample the next token.
-        # output = self.model.sample(
-        #     hidden_states=hidden_states,
-        #     sampling_metadata=sampling_metadata,
-        # )
+
         results = []
-        try:
-            for i,val in enumerate(seq_groups):
+        for i, val in enumerate(seq_groups):
+            if revert_mode[val] :
+                tmp_hidden_states = hidden_states[i]
+                if input_tokens[i].shape[-2] != 1:
+                    tmp_hidden_states = tmp_hidden_states[-1:, :]
+                result = SequenceGroupOutput(
+                    samples=[
+                        SequenceOutput(
+                            parent_seq_id=seq_groups[i],
+                            output_token= cache_token_ids_group[val][len(seq_group[val].output_token_ids) - 1],
+                            logprobs={cache_token_ids_group[val][len(seq_group[val].output_token_ids) - 1]:[0,0,0,0]},
+                            hidden_states=tmp_hidden_states,
+                            revert_mode=True,
+                            finished=False,
+                        ),
+                    ],
+                    prompt_logprobs=None,
+                )
+                results.append(result)
+            else:
+                input_tokens = input_tokens[:, :, :]
+                hidden_states = hidden_states[:, :, :]
+                idx_next, logprob, finish = self.sampler.sample(
+                    inputs_ids=input_tokens,
+                    hidden_states=hidden_states,
+                    infer_text=infer_text,
+                    temperature=temperture,
+                    logits_processors=logits_processors,
+                    logits_warpers=logits_warpers,
+                    min_new_token=min_new_token,
+                    now_length=1,
+                    eos_token=eos_token,
+                    start_idx=start_idx,
+                )
+                # print(logprob.shape, idx_next.shape)
+                if len(logprob.shape) == 2:
+                    logprob = logprob[:, None, :]
+                logprob = torch.gather(logprob, -1, idx_next.transpose(-1, -2))[:, :, 0]
+                # print("测试",idx_next.shape, logprob.shape)
+                # Sample the next token.
+                # output = self.model.sample(
+                #     hidden_states=hidden_states,
+                #     sampling_metadata=sampling_metadata,
+                # )
                 idx_next_i = idx_next[i, 0, :].tolist()
                 logprob_i = logprob[i].tolist()
                 tmp_hidden_states = hidden_states[i]
@@ -577,16 +606,13 @@ class ModelRunner:
                             logprobs={tuple(idx_next_i): logprob_i},
                             output_token=tuple(idx_next_i),
                             hidden_states=tmp_hidden_states,
+                            revert_mode=False,
                             finished=finish[i].item(),
                         ),
                     ],
                     prompt_logprobs=None,
                 )
                 results.append(result)
-        except Exception as e:
-            print(e)
-        # print(results)
-        # print(idx_next, idx_next.shape, logprob.shape)
         return results
 
     @torch.inference_mode()
@@ -611,8 +637,9 @@ class ModelRunner:
                 request_id=str(group_id),
                 is_prompt=True,
                 seq_data={group_id: seq_data},
+                cache_token_ids=None,
                 sampling_params=sampling_params,
-                speaker_embedding_param=torch.zeros(1, seq_len, 768).to("cuda"),
+                speaker_embedding_param=torch.zeros(1, seq_len, 768,dtype=torch.float32).to("cuda"),
                 block_tables=None,
             )
             seqs.append(seq)
@@ -682,7 +709,6 @@ class ModelRunner:
         elapsed_time = end_time - start_time
         # This usually takes < 10 seconds.
         logger.info(f"Graph capturing finished in {elapsed_time:.0f} secs.")
-
 
 class CUDAGraphRunner:
 
@@ -772,7 +798,7 @@ def _pad_to_max(x: List[int], max_len: int, pad: List[int]) -> List[int]:
     assert len(x) <= max_len
     if len(x) == max_len:
         return list(x)
-    return list(x) + [pad] * (max_len - len(x))
+    return [pad] * (max_len - len(x)) + list(x)
 
 
 def _make_tensor_with_pad(
@@ -811,7 +837,7 @@ def _make_with_pad(
             padded_x.append(x_i)
         else:
             padded_x.append(
-                torch.cat((x_i, torch.zeros(1, max_len-x_i.shape[-2], 768).to(device)), dim=1)
+                torch.cat((torch.zeros(1, max_len-x_i.shape[-2], 768).to(device), x_i), dim=1)
             )
 
     return padded_x

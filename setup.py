@@ -25,7 +25,7 @@ setup(
         "torch>=2.1.0",
         "torchaudio",
         "tqdm",
-        "transformers>=4.41.1",
+        "transformers==4.44.2",
         "vector_quantize_pytorch",
         "vocos",
     ],

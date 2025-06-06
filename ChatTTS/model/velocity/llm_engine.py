@@ -328,7 +328,8 @@ class LLMEngine:
         request_id: str,
         prompt: Optional[str],
         sampling_params: SamplingParams,
-        speaker_embedding_param: torch.Tensor,
+        cache_token_ids: Optional[List[int]] = None,
+        speaker_embedding_param: torch.Tensor = None,
         prompt_token_ids: Optional[List[int]] = None,
         arrival_time: Optional[float] = None,
     ) -> None:
@@ -356,12 +357,12 @@ class LLMEngine:
         block_size = self.cache_config.block_size
         seq_id = next(self.seq_counter)
         seq = Sequence(
-            seq_id, prompt, prompt_token_ids, speaker_embedding_param, block_size
+            seq_id, prompt, prompt_token_ids, cache_token_ids, speaker_embedding_param, block_size
         )
 
         # Create the sequence group.
         seq_group = SequenceGroup(
-            request_id, [seq], sampling_params, speaker_embedding_param, arrival_time
+            request_id, [seq], sampling_params, cache_token_ids, speaker_embedding_param, arrival_time
         )
 
         # Add the sequence group to the scheduler.
@@ -629,7 +630,9 @@ class LLMEngine:
         # Create the outputs.
         request_outputs: List[RequestOutput] = []
         for seq_group in scheduled_seq_groups + scheduler_outputs.ignored_seq_groups:
+            seq_group.revert_mode = output[0].samples[0].revert_mode
             request_output = RequestOutput.from_seq_group(seq_group)
+            request_output.revert_mode = output[0].samples[0].revert_mode
             request_outputs.append(request_output)
 
         if self.log_stats:

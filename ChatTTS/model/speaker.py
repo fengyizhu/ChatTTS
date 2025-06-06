@@ -152,3 +152,13 @@ class Speaker:
             ),
             dtype=np.float16,
         ).copy()
+
+if __name__ == '__main__':
+    spk = torch.load('seed_28.pt')
+    print(Speaker._encode(spk))
+
+
+
+
+
+

@@ -2,9 +2,12 @@ import os
 import sys
 
 import numpy as np
+import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import Response, StreamingResponse
 
+import ChatTTS
+from ChatTTS.protocol import RefineTextParams, InferCodeParams
 from tools.audio.np import pcm_to_wav_bytes
 
 if sys.platform == "darwin":
@@ -14,14 +17,8 @@ now_dir = os.getcwd()
 sys.path.append(now_dir)
 
 from typing import Optional, AsyncGenerator
-
-import ChatTTS
-
 from tools.logger import get_logger
-
-
 from pydantic import BaseModel
-
 
 logger = get_logger("Command")
 
@@ -34,7 +31,7 @@ async def startup_event():
 
     chat = ChatTTS.Chat(get_logger("ChatTTS"))
     logger.info("Initializing ChatTTS...")
-    if chat.load(use_vllm=True):
+    if chat.load():
         logger.info("Models loaded successfully.")
     else:
         logger.error("Models load failed.")
@@ -51,8 +48,8 @@ class ChatTTSParams(BaseModel):
     use_decoder: bool = True
     do_text_normalization: bool = True
     do_homophone_replacement: bool = False
-    params_refine_text: Optional[ChatTTS.Chat.RefineTextParams] = None
-    params_infer_code: Optional[ChatTTS.Chat.InferCodeParams] = None
+    params_refine_text: Optional[RefineTextParams] = None
+    params_infer_code: Optional[InferCodeParams] = None
     stream_batch_size: int = 16
 
 
@@ -76,7 +73,6 @@ async def speech(params: ChatTTSParams):
     )
 
     if params.stream:
-
         async def stream_results() -> AsyncGenerator[bytes, None]:
             async for output in results_generator:
                 yield pcm_to_wav_bytes(output[0])
@@ -95,3 +91,6 @@ async def speech(params: ChatTTSParams):
     return Response(
         content=output, media_type="audio/wav", headers={"Cache-Control": "no-cache"}
     )
+
+if __name__ == '__main__':
+    uvicorn.run(app, host="0.0.0.0", port=8080, log_level="info")

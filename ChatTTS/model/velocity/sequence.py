@@ -131,11 +131,13 @@ class Sequence:
         seq_id: int,
         prompt: str,
         prompt_token_ids: List[int],
+        cache_token_ids: List[int],
         speaker_embedding_param: torch.Tensor,
         block_size: int,
     ) -> None:
         self.seq_id = seq_id
         self.prompt = prompt
+        self.cache_token_ids = cache_token_ids
         self.speaker_embedding_param = speaker_embedding_param
         self.block_size = block_size
 
@@ -262,15 +264,19 @@ class SequenceGroup:
         request_id: str,
         seqs: List[Sequence],
         sampling_params: SamplingParams,
+        cache_token_ids: List[int],
         speaker_embedding_param: torch.Tensor,
         arrival_time: float,
+        revert_mode: bool = False,
     ) -> None:
         self.request_id = request_id
         self.seqs_dict = {seq.seq_id: seq for seq in seqs}
         self.sampling_params = sampling_params
+        self.cache_token_ids = cache_token_ids
         self.speaker_embedding_param = speaker_embedding_param
         self.arrival_time = arrival_time
         self.prompt_logprobs: Optional[PromptLogprobs] = None
+        self.revert_mode = revert_mode
 
     @property
     def prompt(self) -> str:
@@ -370,6 +376,7 @@ class SequenceGroupMetadata:
         is_prompt: bool,
         seq_data: Dict[int, SequenceData],
         sampling_params: SamplingParams,
+        cache_token_ids: List[int],
         speaker_embedding_param: torch.Tensor,
         block_tables: Dict[int, List[int]],
     ) -> None:
@@ -378,6 +385,7 @@ class SequenceGroupMetadata:
         self.seq_data = seq_data
         self.sampling_params = sampling_params
         self.speaker_embedding_param = speaker_embedding_param
+        self.cache_token_ids = cache_token_ids
         self.block_tables = block_tables
 
 
@@ -398,6 +406,7 @@ class SequenceOutput:
         output_token: int,
         logprobs: Dict[int, float],
         hidden_states: Optional[torch.Tensor] = None,
+        revert_mode: Optional[bool] = False,
         finished: bool = False,
     ) -> None:
         self.parent_seq_id = parent_seq_id
@@ -405,6 +414,7 @@ class SequenceOutput:
         self.logprobs = logprobs
         self.finished = finished
         self.hidden_states = hidden_states
+        self.revert_mode = revert_mode
 
     def __repr__(self) -> str:
         return (
@@ -412,6 +422,7 @@ class SequenceOutput:
             f"output_token={self.output_token}, "
             f"logprobs={self.logprobs}),"
             f"finished={self.finished}),"
+            f"revert_mode={self.revert_mode}),"
             f"hidden_states={self.hidden_states.shape if self.hidden_states is not None else None}"
         )
 

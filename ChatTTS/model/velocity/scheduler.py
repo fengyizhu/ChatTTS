@@ -312,6 +312,7 @@ class Scheduler:
                 request_id=seq_group.request_id,
                 is_prompt=scheduler_outputs.prompt_run,
                 seq_data=seq_data,
+                cache_token_ids= seq_group.cache_token_ids,
                 sampling_params=seq_group.sampling_params,
                 speaker_embedding_param=seq_group.speaker_embedding_param,
                 block_tables=block_tables,
