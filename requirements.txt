@@ -17,3 +17,5 @@ pydub
 vllm==0.2.7
 pybase16384
 librosa
+fastapi
+requests

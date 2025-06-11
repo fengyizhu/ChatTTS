@@ -249,9 +249,9 @@ class Chat:
         params: InferCodeParams,
         stream_batch_size: int,
         original_text: str
-    ) -> AsyncIterator[Tuple[np.ndarray, Optional[str], Optional[str]]]:
+    ):
         """处理音频生成逻辑
-        
+
         Args:
             texts: 输入文本列表
             stream: 是否流式处理
@@ -259,87 +259,98 @@ class Chat:
             params: 推理参数
             stream_batch_size: 流式处理的批次大小
             original_text: 原始文本
-            
+
         Yields:
             Tuple[音频数据, 原始文本, token IDs]
         """
         length = 0
-        
-        async for result in self._infer_code(
+
+        result_generator = self._infer_code(
             texts, stream, self.device, use_decoder, params, stream_batch_size
-        ):
+        )
+
+        async for result in result_generator:
             wavs = self._decode_to_wavs(
                 result.hiddens if use_decoder else result.ids,
                 use_decoder,
             )
-            
+
             if result.finished:
                 cache_token_ids = Speaker.encode_prompt(result.ids[0])
                 self.logger.debug(
-                    "Generated audio for text: %s, cache_token_ids: %s", 
+                    "Generated audio for text: %s, cache_token_ids: %s",
                     texts, cache_token_ids
                 )
                 yield self._resample_audio(
                     wavs[:, length:], 24000, params.target_sr
                 ), original_text, cache_token_ids
             else:
-                async for chunk in self._handle_streaming_audio(
-                    wavs, length, params.target_sr
-                ):
-                    yield chunk
-    
+                import librosa
+                silence_intervals = librosa.effects.split(wavs[0][length:], top_db=10)
+                silence_left = 0
+                if len(silence_intervals) == 0:
+                    silence_left = len(wavs[0])
+                else:
+                    for i in range(len(silence_intervals)):
+                        silence_left = silence_intervals[i][0]
+                    if silence_left <= 0:
+                        continue
+                new_wavs = wavs[:, length: length + silence_left]
+                length += len(new_wavs[0])
+                yield new_wavs
+
     def _resample_audio(
-        self, 
-        audio: np.ndarray, 
-        orig_sr: int, 
+        self,
+        audio: np.ndarray,
+        orig_sr: int,
         target_sr: int
     ) -> np.ndarray:
         """重采样音频
-        
+
         Args:
             audio: 原始音频数据
             orig_sr: 原始采样率
             target_sr: 目标采样率
-            
+
         Returns:
             重采样后的音频数据
         """
         import librosa
         return librosa.resample(audio, orig_sr=orig_sr, target_sr=target_sr)
-    
-    def _handle_streaming_audio(
-        self, 
-        wavs: np.ndarray, 
-        length: int, 
+
+    async def _handle_streaming_audio(
+        self,
+        wavs: np.ndarray,
+        length: int,
         target_sr: int
-    ) -> AsyncIterator[Tuple[np.ndarray, None, None]]:
+    ) :
         """处理流式音频数据
-        
+
         Args:
             wavs: 音频数据
             length: 当前处理长度
             target_sr: 目标采样率
-            
+
         Yields:
             Tuple[音频数据, None, None]
         """
         import librosa
         # 检查静音段
         silence_intervals = librosa.effects.split(wavs[0][length:], top_db=20)
-        
-        if not silence_intervals:
-            return
-            
+
+        if len(silence_intervals) == 0:
+            return None,None,None # 如果没有静音段，直接返回
+
         # 获取最后一个非静音段的起始位置
         silence_left = silence_intervals[-1][0] if silence_intervals else len(wavs[0])
-        
+
         if silence_left <= 0:
-            return
-            
+            return None,None,None
+
         # 提取非静音段
         new_wavs = wavs[:, length:length + silence_left]
         if new_wavs.size > 0:
-            yield self._resample_audio(
+            return self._resample_audio(
                 new_wavs, 24000, target_sr
             ), None, None
 
@@ -356,7 +367,7 @@ class Chat:
         params_refine_text: RefineTextParams = RefineTextParams(),
         params_infer_code: InferCodeParams = InferCodeParams(),
         stream_batch_size: int = 8,
-    ) -> AsyncIterator[Tuple[np.ndarray, Optional[str], Optional[str]]]:
+    ) :
         """执行文本到语音的推理
         
         Args:
@@ -394,22 +405,12 @@ class Chat:
         texts = self._normalize_texts(
             texts, do_text_normalization, do_homophone_replacement, lang
         )
-        
-        # 文本精炼
-        if not skip_refine_text:
-            texts, should_return = self._refine_texts(
-                texts, params_refine_text, refine_text_only
-            )
-            if should_return:
-                yield texts
-                return
-        
+
         # 音频生成
-        async for result in self._process_audio_generation(
+        return self._process_audio_generation(
             texts, stream, use_decoder, params_infer_code, 
             stream_batch_size, original_text
-        ):
-            yield result
+        )
 
     @torch.inference_mode()
     def _vocos_decode(self, spec: torch.Tensor) -> np.ndarray:

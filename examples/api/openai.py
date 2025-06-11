@@ -60,7 +60,8 @@ async def speech(params: ChatTTSParams):
     logger.info("Use speaker:")
     logger.info(params.params_infer_code.spk_emb)
     logger.info("Start voice inference.")
-    results_generator = chat.infer(
+    # chat.infer returns a coroutine that needs to be awaited
+    results_generator = await chat.infer(
         text=text,
         stream=params.stream,
         lang=params.lang,
@@ -74,14 +75,15 @@ async def speech(params: ChatTTSParams):
 
     if params.stream:
         async def stream_results() -> AsyncGenerator[bytes, None]:
-            async for output in results_generator:
-                yield pcm_to_wav_bytes(output[0])
+            async for result in results_generator:
+                yield pcm_to_wav_bytes(result[0])
 
         return StreamingResponse(
             content=stream_results(), media_type="text/event-stream"
         )
 
     output = None
+    # Properly iterate through the async iterator
     async for request_output in results_generator:
         if output is None:
             output = request_output[0]
