@@ -1,5 +1,6 @@
-import os
+import json
 import sys
+from contextlib import asynccontextmanager
 
 import numpy as np
 import uvicorn
@@ -7,28 +8,18 @@ from fastapi import FastAPI
 from fastapi.responses import Response, StreamingResponse
 
 import ChatTTS
-from ChatTTS.protocol import RefineTextParams, InferCodeParams
+from ChatTTS.protocol import ChatTTSParams
 from tools.audio.np import pcm_to_wav_bytes
 
-if sys.platform == "darwin":
-    os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
-now_dir = os.getcwd()
-sys.path.append(now_dir)
-
-from typing import Optional, AsyncGenerator
+from typing import AsyncGenerator
 from tools.logger import get_logger
-from pydantic import BaseModel
 
 logger = get_logger("Command")
 
-app = FastAPI()
-
-
-@app.on_event("startup")
-async def startup_event():
+@asynccontextmanager
+async def startup_event(app: FastAPI):
     global chat
-
     chat = ChatTTS.Chat(get_logger("ChatTTS"))
     logger.info("Initializing ChatTTS...")
     if chat.load():
@@ -36,41 +27,21 @@ async def startup_event():
     else:
         logger.error("Models load failed.")
         sys.exit(1)
+    yield
 
-
-class ChatTTSParams(BaseModel):
-    input: str
-    stream: bool = False
-    lang: Optional[str] = None
-    voice: Optional[str] = None
-    skip_refine_text: bool = True
-    refine_text_only: bool = False
-    use_decoder: bool = True
-    do_text_normalization: bool = True
-    do_homophone_replacement: bool = False
-    params_refine_text: Optional[RefineTextParams] = None
-    params_infer_code: Optional[InferCodeParams] = None
-    stream_batch_size: int = 16
-
+app = FastAPI(lifespan=startup_event)
 
 @app.post("/v1/audio/speech")
 async def speech(params: ChatTTSParams):
-    logger.info("Text input: %s", str(params.input))
-    text = [params.input]
-    logger.info("Use speaker:")
-    logger.info(params.params_infer_code.spk_emb)
-    logger.info("Start voice inference.")
-    # chat.infer returns a coroutine that needs to be awaited
+
+    logger.info(f"start voice params {json.dumps(params, ensure_ascii=False)}")
+
     results_generator = await chat.infer(
-        text=text,
+        input=params.input,
         stream=params.stream,
+        speed=params.speed,
         lang=params.lang,
-        skip_refine_text=params.skip_refine_text,
-        use_decoder=params.use_decoder,
-        do_text_normalization=params.do_text_normalization,
-        do_homophone_replacement=params.do_homophone_replacement,
-        params_infer_code=params.params_infer_code,
-        params_refine_text=params.params_refine_text,
+        params_infer_code=params.inferCodeParams,
     )
 
     if params.stream:

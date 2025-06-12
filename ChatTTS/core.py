@@ -76,8 +76,6 @@ class Chat:
             
         return not bool(missing_modules)
 
-    # 模型下载和加载相关方法已移动到load.py
-
     def load(
         self,
         source: Literal["huggingface", "local", "custom"] = "local",
@@ -299,87 +297,28 @@ class Chat:
                 length += len(new_wavs[0])
                 yield new_wavs
 
-    def _resample_audio(
-        self,
-        audio: np.ndarray,
-        orig_sr: int,
-        target_sr: int
-    ) -> np.ndarray:
-        """重采样音频
-
-        Args:
-            audio: 原始音频数据
-            orig_sr: 原始采样率
-            target_sr: 目标采样率
-
-        Returns:
-            重采样后的音频数据
-        """
-        import librosa
-        return librosa.resample(audio, orig_sr=orig_sr, target_sr=target_sr)
-
-    async def _handle_streaming_audio(
-        self,
-        wavs: np.ndarray,
-        length: int,
-        target_sr: int
-    ) :
-        """处理流式音频数据
-
-        Args:
-            wavs: 音频数据
-            length: 当前处理长度
-            target_sr: 目标采样率
-
-        Yields:
-            Tuple[音频数据, None, None]
-        """
-        import librosa
-        # 检查静音段
-        silence_intervals = librosa.effects.split(wavs[0][length:], top_db=20)
-
-        if len(silence_intervals) == 0:
-            return None,None,None # 如果没有静音段，直接返回
-
-        # 获取最后一个非静音段的起始位置
-        silence_left = silence_intervals[-1][0] if silence_intervals else len(wavs[0])
-
-        if silence_left <= 0:
-            return None,None,None
-
-        # 提取非静音段
-        new_wavs = wavs[:, length:length + silence_left]
-        if new_wavs.size > 0:
-            return self._resample_audio(
-                new_wavs, 24000, target_sr
-            ), None, None
 
     async def infer(
         self,
-        text: Union[str, List[str]],
+        input: str,
         stream: bool = False,
         lang: Optional[str] = None,
-        skip_refine_text: bool = False,
-        refine_text_only: bool = False,
+        speed: Optional[float] = 1.0,
         use_decoder: bool = True,
         do_text_normalization: bool = True,
         do_homophone_replacement: bool = True,
-        params_refine_text: RefineTextParams = RefineTextParams(),
         params_infer_code: InferCodeParams = InferCodeParams(),
         stream_batch_size: int = 8,
     ) :
         """执行文本到语音的推理
         
         Args:
-            text: 输入文本或文本列表
+            input: 输入文本或文本列表
             stream: 是否流式输出结果
             lang: 语言代码
-            skip_refine_text: 是否跳过文本精炼
-            refine_text_only: 是否仅精炼文本
             use_decoder: 是否使用decoder
             do_text_normalization: 是否进行文本标准化
             do_homophone_replacement: 是否进行同音词替换
-            params_refine_text: 文本精炼参数
             params_infer_code: 推理参数
             stream_batch_size: 流式处理的批次大小
             
@@ -390,12 +329,12 @@ class Chat:
             AssertionError: 如果模型未正确加载
         """
         # 验证模型已加载
-        assert self.has_loaded(use_decoder=use_decoder), \
+        assert self.has_loaded(use_decoder=True), \
             "Model not properly loaded. Call load() first."
         
         # 处理输入文本
         texts, original_text = self._process_text_input(
-            text, 
+            input,
             params_infer_code.cache_text,
             params_infer_code.cache_token_ids,
             use_decoder
@@ -558,73 +497,3 @@ class Chat:
                     hiddens=hidden_states,
                     attentions=[],
                 )
-
-    @torch.no_grad()
-    def _refine_text(
-        self,
-        text: str,
-        device: torch.device,
-        params: RefineTextParams,
-    ):
-        """使用VLLM引擎精炼文本
-        
-        Args:
-            text: 输入文本
-            device: 设备
-            params: 精炼参数
-            
-        Returns:
-            精炼后的文本输出
-        """
-        gpt = self.gpt
-
-        if not isinstance(text, list):
-            text = [text]
-
-        input_ids, attention_mask, text_mask = self.tokenizer.encode(
-            self.speaker.decorate_text_prompts(text, params.prompt),
-            self.config.gpt.num_vq,
-            device=self.device_gpt,
-        )
-
-        logits_warpers, logits_processors = gen_logits(
-            num_code=self.tokenizer.len,
-            top_P=params.top_P,
-            top_K=params.top_K,
-            repetition_penalty=params.repetition_penalty,
-        )
-
-        from .model.velocity import SamplingParams
-
-        sample_params = SamplingParams(
-            repetition_penalty=params.repetition_penalty,
-            temperature=params.temperature,
-            top_p=params.top_P,
-            top_k=params.top_K,
-            max_new_token=params.max_new_token,
-            max_tokens=8192,
-            min_new_token=params.min_new_token,
-            logits_processors=(logits_processors, logits_warpers),
-            eos_token=self.tokenizer.eos_token,
-            infer_text=True,
-            start_idx=input_ids.shape[-2],
-        )
-        input_ids_list = [i.tolist() for i in input_ids]
-        del input_ids
-
-        result = gpt.llm.generate(
-            None, sample_params, input_ids_list, params.show_tqdm
-        )
-        token_ids = []
-        hidden_states = []
-        for i in result:
-            token_ids.append(torch.tensor(i.outputs[0].token_ids))
-            hidden_states.append(i.outputs[0].hidden_states)
-
-        del text_mask, input_ids_list, result
-
-        return GenerationOutputs(
-            ids=token_ids,
-            hiddens=hidden_states,
-            attentions=[],
-        )
