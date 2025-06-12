@@ -1,7 +1,7 @@
 ChatTTS VLLM & API
 ========================
 
-基于官方VLLM结构改进的ChatTTS推理方案，具备准实时语音合成能力。
+基于ChatTTS(https://github.com/2noise/ChatTTS)改进的推理框架，具备流式实时语音合成能力。
 
 ## 特性：
 - 支持openai标准规范的语音合成接口
@@ -12,7 +12,8 @@ ChatTTS VLLM & API
 
 ## 快速体验
 感谢bella开源项目提供资源试点 https://api.bella.top/playground 语音合成（模型选择chat-tts）或者实时语音对话（选择bella-realtime模型）
-![img.png](docs/img.png)
+## 演示
+[demo.mp4](docs/demo.mp4)
 
 ## 安装方式
 ```bash
@@ -33,11 +34,12 @@ python -m examples/api/openai.py
 curl -X POST "http://localhost:8080/v1/audio/speech" \
 -H "Content-Type: application/json" \
 -d '{
-  "model": "chat-tts",
-  "voice": "28",
-  "input": "你好，今天天气怎么样。",
-  "response_format": "pcm",
-  "stream": false,
+    "model": "Chat-TTS",
+    "input": "你好，今天天气怎么样。",
+    "voice": "28",
+    "speed": 1,
+    "response_format": "wav",
+    "stream":false
 }'
 ```
 流式接口用例
@@ -45,11 +47,12 @@ curl -X POST "http://localhost:8080/v1/audio/speech" \
 curl -X POST "http://localhost:8080/v1/audio/speech" \
 -H "Content-Type: application/json" \
 -d '{
-  "model": "chat-tts",
-  "voice": "28",
-  "input": "你好，今天天气怎么样。",
-  "response_format": "pcm",
-  "stream": true,
+    "model": "Chat-TTS",
+    "input": "你好，今天天气怎么样。",
+    "voice": "28",
+    "speed": 1,
+    "response_format": "pcm",
+    "stream":true
 }'
 ```
 

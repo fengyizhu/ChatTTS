@@ -46,7 +46,9 @@ async def speech(params: ChatTTSParams):
 
     results_generator = await chat.infer(
         input=params.input,
+        voice=params.voice,
         stream=params.stream,
+        lang=None,
         speed=params.speed,
         use_decoder=True,
         do_text_normalization=True,

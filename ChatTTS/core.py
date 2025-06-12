@@ -31,6 +31,12 @@ class Chat:
             os.path.join(os.path.dirname(__file__), "res", "homophones_map.json"),
             logger,
         )
+
+        # 加载音色配置表
+        with open(
+            os.path.join(os.path.dirname(__file__), "res", "voice_map.json")
+        ) as f:
+            self.voice_map: Dict[str, str] = load(f)
         
         # 加载SHA256校验映射
         with open(
@@ -231,6 +237,7 @@ class Chat:
     async def infer(
         self,
         input: str,
+        voice: str,
         stream: bool = False,
         lang: Optional[str] = None,
         speed: Optional[int] = 1,
@@ -265,6 +272,12 @@ class Chat:
         texts = self._normalize_texts(
             [input], do_text_normalization, do_homophone_replacement, lang
         )
+
+        """
+            集成音色映射
+        """
+        params_infer_code.spk_emb = self.voice_map.get(voice)
+        assert params_infer_code.spk_emb, f"Voice {voice} not found in voice_map."
 
         # 音频生成
         return self._process_audio_generation(
