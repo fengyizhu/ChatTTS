@@ -1,7 +1,7 @@
 import os
 import uuid
 from dataclasses import asdict
-from typing import Literal, Optional, List, Tuple, Dict, Union, AsyncIterator
+from typing import Literal, Optional, List, Tuple, Dict, Union
 from json import load
 
 import numpy as np
@@ -9,7 +9,6 @@ import torch
 
 from .config import Config
 from .model import gen_logits, Speaker
-from .model.gpt import GPT
 from .utils import del_all
 from .utils import logger as utils_logger
 from .protocol import RefineTextParams, InferCodeParams, GenerationOutputs
@@ -146,48 +145,10 @@ class Chat:
                 
         # 重新初始化Chat实例
         self.__init__(logger)
-
-    def sample_random_speaker(self) -> str:
-        return self.speaker.sample_random()
-
-    def sample_audio_speaker(self, wav: Union[np.ndarray, torch.Tensor]) -> str:
-        return self.speaker.encode_prompt(self.dvae.sample_audio(wav))
-
-    def interrupt(self):
-        self.context.set(True)
-
-    # 设备设置和模型加载相关方法已移动到load.py
-
-    def _process_text_input(
-        self, 
-        text: Union[str, List[str]], 
-        cache_text: Optional[str],
-        cache_token_ids: Optional[str],
-        use_decoder: bool
-    ) -> Tuple[List[str], str]:
-        """处理输入文本，包括缓存处理和类型转换
-        
-        Args:
-            text: 输入文本或文本列表
-            cache_text: 缓存的文本
-            cache_token_ids: 缓存的token IDs
-            use_decoder: 是否使用decoder
-            
-        Returns:
-            Tuple[处理后的文本列表, 原始文本]
-        """
-        original_text = text
-        if cache_text is not None and cache_token_ids is not None:
-            text = cache_text + text
-            
-        if not isinstance(text, list):
-            text = [text]
-            
-        return text, original_text
         
     def _normalize_texts(
         self, 
-        texts: List[str], 
+        texts: List[str],
         do_normalize: bool, 
         do_homophone: bool, 
         lang: Optional[str]
@@ -209,44 +170,15 @@ class Chat:
         ]
         self.logger.info("Normalized texts: %s", normalized)
         return normalized
-        
-    def _refine_texts(
-        self, 
-        texts: List[str], 
-        params: RefineTextParams,
-        refine_text_only: bool
-    ) -> Tuple[List[str], bool]:
-        """精炼文本
-        
-        Args:
-            texts: 待精炼的文本列表
-            params: 精炼参数
-            refine_text_only: 是否仅精炼文本
-            
-        Returns:
-            Tuple[精炼后的文本列表, 是否应该直接返回结果]
-        """
-        refined = self._refine_text(texts, self.device, params)
-        try:
-            text_tokens = [i[i.less(self.tokenizer.break_0_ids)] for i in refined.ids]
-            processed_texts = self.tokenizer.decode(text_tokens)
-            
-            if refine_text_only:
-                return processed_texts, True
-                
-            return processed_texts, False
-            
-        finally:
-            refined.destroy()
     
     async def _process_audio_generation(
         self,
         texts: List[str],
         stream: bool,
+        speed: int,
         use_decoder: bool,
         params: InferCodeParams,
         stream_batch_size: int,
-        original_text: str
     ):
         """处理音频生成逻辑
 
@@ -264,7 +196,7 @@ class Chat:
         length = 0
 
         result_generator = self._infer_code(
-            texts, stream, self.device, use_decoder, params, stream_batch_size
+            texts, stream, speed, params, stream_batch_size
         )
 
         async for result in result_generator:
@@ -279,9 +211,7 @@ class Chat:
                     "Generated audio for text: %s, cache_token_ids: %s",
                     texts, cache_token_ids
                 )
-                yield self._resample_audio(
-                    wavs[:, length:], 24000, params.target_sr
-                ), original_text, cache_token_ids
+                yield wavs[:, length:]
             else:
                 import librosa
                 silence_intervals = librosa.effects.split(wavs[0][length:], top_db=10)
@@ -303,7 +233,7 @@ class Chat:
         input: str,
         stream: bool = False,
         lang: Optional[str] = None,
-        speed: Optional[float] = 1.0,
+        speed: Optional[int] = 1,
         use_decoder: bool = True,
         do_text_normalization: bool = True,
         do_homophone_replacement: bool = True,
@@ -328,27 +258,22 @@ class Chat:
         Raises:
             AssertionError: 如果模型未正确加载
         """
-        # 验证模型已加载
-        assert self.has_loaded(use_decoder=True), \
-            "Model not properly loaded. Call load() first."
-        
-        # 处理输入文本
-        texts, original_text = self._process_text_input(
-            input,
-            params_infer_code.cache_text,
-            params_infer_code.cache_token_ids,
-            use_decoder
-        )
-        
-        # 文本标准化
+
+        """
+            文本标准化与生僻字音字替换   
+        """
         texts = self._normalize_texts(
-            texts, do_text_normalization, do_homophone_replacement, lang
+            [input], do_text_normalization, do_homophone_replacement, lang
         )
 
         # 音频生成
         return self._process_audio_generation(
-            texts, stream, use_decoder, params_infer_code, 
-            stream_batch_size, original_text
+            texts,
+            stream,
+            speed,
+            use_decoder,
+            params_infer_code,
+            stream_batch_size
         )
 
     @torch.inference_mode()
@@ -391,10 +316,9 @@ class Chat:
     @torch.no_grad()
     async def _infer_code(
         self,
-        text: Tuple[List[str], str],
+        texts: Tuple[List[str], str],
         stream: bool,
-        device: torch.device,
-        use_decoder: bool,
+        speed: int,
         params: InferCodeParams,
         stream_batch_size: int,
     ):
@@ -413,20 +337,21 @@ class Chat:
         """
         gpt = self.gpt
 
-        if not isinstance(text, list):
-            text = [text]
-
-        assert len(text), "text should not be empty"
+        if not isinstance(texts, list):
+            texts = [texts]
+        assert len(texts), "text should not be empty"
 
         if not isinstance(params.temperature, list):
             temperature = [params.temperature] * self.config.gpt.num_vq
         else:
             temperature = params.temperature
 
+        prompt = f"[speed_{speed}]"
+
         input_ids, attention_mask, text_mask = self.tokenizer.encode(
             self.speaker.decorate_code_prompts(
-                text,
-                params.prompt,
+                texts,
+                prompt,
                 params.txt_smp,
                 params.spk_emb,
             ),
@@ -450,6 +375,7 @@ class Chat:
 
         speaker_embedding_param = self.embed(input_ids, text_mask)
         del text_mask
+
         if params.spk_emb is not None:
             self.speaker.apply(
                 speaker_embedding_param,
@@ -472,8 +398,9 @@ class Chat:
             start_idx=start_idx,
         )
         input_ids = [i.tolist() for i in input_ids]
-        if params.cache_token_ids is not None:
-            cache_token_ids = Speaker.decode_prompt(params.cache_token_ids)
+
+        if params.cloning is not None:
+            cache_token_ids = Speaker.decode_prompt(params.cloning)
             cache_token_ids = [tuple(i) for i in cache_token_ids.tolist()]
             cache_token_ids = cache_token_ids[:-1]
         else:

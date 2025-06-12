@@ -12,6 +12,13 @@ def float_to_int16(audio: np.ndarray) -> np.ndarray:
     am = 32767 * 32768 // am
     return np.multiply(audio, am).astype(np.int16)
 
+def pcm_to_bytes(audio: np.ndarray) -> bytes:
+    buf = io.BytesIO()
+    buf.write(float_to_int16(audio))
+    buf.seek(0, 0)
+    pcm_data = buf.getvalue()
+    buf.close()
+    return pcm_data
 
 def pcm_to_wav_bytes(pcm_data: np.ndarray) -> bytes:
     buf = io.BytesIO()
@@ -24,3 +31,12 @@ def pcm_to_wav_bytes(pcm_data: np.ndarray) -> bytes:
     wav_data = buf.getvalue()
     buf.close()
     return wav_data
+
+def response_format_to_bytes(audio: np.ndarray, response_format: str) -> bytes:
+    if response_format == "pcm":
+        return pcm_to_bytes(audio)
+    elif response_format == "wav":
+        return pcm_to_wav_bytes(audio)
+    else:
+        raise ValueError(f"Unsupported response format: {response_format}")
+

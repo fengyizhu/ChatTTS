@@ -9,8 +9,7 @@ from pydantic import BaseModel
 
 from ChatTTS.utils import del_all
 
-@dataclass(repr=False, eq=False)
-class RefineTextParams:
+class RefineTextParams(BaseModel):
     """文本精炼参数"""
     prompt: str = ""
     top_P: float = 0.7
@@ -23,10 +22,8 @@ class RefineTextParams:
     ensure_non_empty: bool = True
     manual_seed: Optional[int] = None
 
-@dataclass(repr=False, eq=False)
 class InferCodeParams(RefineTextParams):
     """推理代码参数"""
-    prompt: str = "[speed_1]"
     spk_emb: Optional[str] = None
     spk_smp: Optional[str] = None
     txt_smp: Optional[str] = None
@@ -37,9 +34,9 @@ class InferCodeParams(RefineTextParams):
     stream_speed: int = 12000
     pass_first_n_batches: int = 2
 
-    cache_text: str = None
-    cache_token_ids: str = None
+    cloning: str = None
     target_sr: int = 24000
+    stream_batch_size: int = 8
 
 @dataclass(repr=False, eq=False)
 class GenerationOutputs:
@@ -53,18 +50,16 @@ class GenerationOutputs:
         del_all(self.attentions)
         del_all(self.hiddens)
 
-@dataclass(repr=False, eq=False)
 class ChatTTSParams(BaseModel):
-    # openai interface
     model: str
     input: str
-    stream: bool = True
+    stream: Optional[bool] = False
     voice: Optional[str] = "28"
     response_format: Optional[str] = "wav"
-    speed: int = 1,
+    speed: Optional[int] = 1
 
     # supper parameters
-    inferCodeParams: Optional[InferCodeParams] = InferCodeParams()
+    params_infer_code: Optional[InferCodeParams] = InferCodeParams()
 
 
 

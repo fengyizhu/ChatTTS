@@ -9,10 +9,10 @@ from fastapi.responses import Response, StreamingResponse
 
 import ChatTTS
 from ChatTTS.protocol import ChatTTSParams
-from tools.audio.np import pcm_to_wav_bytes
-
 
 from typing import AsyncGenerator
+
+from tools.audio.np import response_format_to_bytes
 from tools.logger import get_logger
 
 logger = get_logger("Command")
@@ -31,23 +31,34 @@ async def startup_event(app: FastAPI):
 
 app = FastAPI(lifespan=startup_event)
 
+@app.post("/v1/audio/cloning")
+async def cloning(params: ChatTTSParams):
+    logger.info(f"start cloning params {json.dumps(params, ensure_ascii=False)}")
+
+
+
 @app.post("/v1/audio/speech")
 async def speech(params: ChatTTSParams):
 
-    logger.info(f"start voice params {json.dumps(params, ensure_ascii=False)}")
+    logger.info(f"start voice params {json.dumps(params.dict(), ensure_ascii=False)}")
+    # 设置速度提示
+    assert params.speed in [1, 2, 3, 4, 5], "speed should be in [1, 2, 3, 4, 5]"
 
     results_generator = await chat.infer(
         input=params.input,
         stream=params.stream,
         speed=params.speed,
-        lang=params.lang,
-        params_infer_code=params.inferCodeParams,
+        use_decoder=True,
+        do_text_normalization=True,
+        do_homophone_replacement=True,
+        params_infer_code=params.params_infer_code,
+        stream_batch_size=params.params_infer_code.stream_batch_size,
     )
 
     if params.stream:
         async def stream_results() -> AsyncGenerator[bytes, None]:
             async for result in results_generator:
-                yield pcm_to_wav_bytes(result[0])
+                yield response_format_to_bytes(result[0], params.response_format)
 
         return StreamingResponse(
             content=stream_results(), media_type="text/event-stream"
@@ -60,7 +71,7 @@ async def speech(params: ChatTTSParams):
             output = request_output[0]
         else:
             output = np.concatenate((output, request_output[0]), axis=0)
-    output = pcm_to_wav_bytes(output)
+    output = response_format_to_bytes(output, params.response_format)
     return Response(
         content=output, media_type="audio/wav", headers={"Cache-Control": "no-cache"}
     )
