@@ -13,8 +13,7 @@ ChatTTS VLLM & API
 ## 快速体验
 感谢bella开源项目提供资源试点 https://api.bella.top/playground 语音合成（模型选择chat-tts）或者实时语音对话（选择bella-realtime模型）
 ## 演示
-[demo.mp4](docs/demo.mp4)
-
+https://github.com/fengyizhu/ChatTTS/blob/develop/docs/demo.mp4
 ## 安装方式
 ```bash
 Clone Repo
