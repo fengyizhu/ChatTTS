@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Optional, Dict, Literal, Union
 from dataclasses import asdict
 
+import numpy as np
 import torch
 from vocos import Vocos
 from vocos.pretrained import instantiate_class
@@ -25,6 +26,13 @@ from .utils import (
     get_latest_modified_file,
 )
 
+seed = 0
+
+torch.manual_seed(seed)
+np.random.seed(seed)
+torch.cuda.manual_seed(seed)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
 
 class ModelLoader:
     """模型加载器，负责下载和加载各种模型"""
