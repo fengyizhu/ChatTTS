@@ -1,5 +1,10 @@
 import json
 import sys
+import os
+
+now_dir = os.getcwd()
+sys.path.append(now_dir)
+
 from contextlib import asynccontextmanager
 
 import numpy as np
@@ -14,6 +19,8 @@ from typing import AsyncGenerator
 
 from tools.audio.np import response_format_to_bytes
 from tools.logger import get_logger
+
+
 
 logger = get_logger("Command")
 

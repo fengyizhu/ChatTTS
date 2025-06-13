@@ -21,7 +21,7 @@ ChatTTS VLLM & API
 - 集成各种数字、符号的发音
 
 ## 快速体验
-感谢bella开源项目提供资源试点 https://api.bella.top/playground 语音合成（模型选择chat-tts）或者实时语音对话（选择bella-realtime模型）
+感谢bella开源项目（https://github.com/LianjiaTech/bella-openapi) 提供资源试点 https://api.bella.top/playground 语音合成（模型选择chat-tts）或者实时语音对话（选择bella-realtime模型）
 ## 演示
 https://github.com/user-attachments/assets/491ff524-e0f4-44dc-b654-59d2b5b89c81
 ## 要求
