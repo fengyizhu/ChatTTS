@@ -4,7 +4,7 @@ ChatTTS VLLM & API
 
 基于ChatTTS (https://github.com/2noise/ChatTTS) 改进的推理框架，具备流式实时语音合成能力。
 
-近期更新更多特性，欢迎 star 
+近期更新更多特性，欢迎【star】优先回复 
 ## 特性：
 - 经过长时间推理验证，稳定性强
 - 支持openai标准规范的语音合成接口
