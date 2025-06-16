@@ -1,6 +1,6 @@
 numpy<2.0.0
 numba
-torch>=2.1.0
+torch==2.1.2
 tqdm
 vector_quantize_pytorch
 transformers==4.44.2

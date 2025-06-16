@@ -35,10 +35,12 @@ cd ChatTTS
 ```bash
 pip install --upgrade -r requirements.txt
 ```
-运行
+运行(参数及默认值如下，按需调整)
 ```bash
-python -m examples/api/openai.py
+python -m examples/api/openai.py --host 0.0.0.0 --port 8080 --gpu_memory_utilization 0.9
 ```
+
+
 同步接口用例
 ```bash
 curl -X POST "http://localhost:8080/v1/audio/speech" \
