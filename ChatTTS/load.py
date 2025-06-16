@@ -205,7 +205,8 @@ class ModelLoader:
         embed_path: str, 
         embed: Embed,
         use_flash_attn: bool = False, 
-        experimental: bool = False
+        experimental: bool = False,
+        gpu_memory_utilization: float = 0.9,
     ) -> GPT:
         """加载 GPT 模型（仅VLLM版本）
         
@@ -225,6 +226,7 @@ class ModelLoader:
             device=self.device,
             device_gpt=self.device_gpt,
             logger=self.logger,
+            gpu_memory_utilization=gpu_memory_utilization,
         ).eval()
         
         assert gpt_ckpt_path, "gpt_ckpt_path should not be None"
@@ -292,6 +294,7 @@ class ModelLoader:
         vocos_ckpt_path: str = None,
         dvae_ckpt_path: str = None,
         gpt_ckpt_path: str = None,
+        gpu_memory_utilization = None,
         embed_path: str = None,
         decoder_ckpt_path: str = None,
         tokenizer_path: str = None,
@@ -331,7 +334,12 @@ class ModelLoader:
             dvae, coef = self.load_dvae(dvae_ckpt_path, coef)
             result['dvae'] = dvae
             result['embed'] = self.load_embed(embed_path)
-            result['gpt'] = self.load_gpt(gpt_ckpt_path, embed_path, result['embed'], use_flash_attn, experimental)
+            result['gpt'] = self.load_gpt(gpt_ckpt_path,
+                                          embed_path,
+                                          result['embed'],
+                                          use_flash_attn,
+                                          experimental,
+                                          gpu_memory_utilization)
             
             # 初始化 Speaker
             result['speaker'] = self.load_speaker(

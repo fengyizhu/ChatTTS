@@ -89,6 +89,7 @@ class Chat:
         device: Optional[torch.device] = None,
         coef: Optional[torch.Tensor] = None,
         experimental: bool = False,
+        args = None,
     ) -> bool:
         """加载模型
         
@@ -124,6 +125,7 @@ class Chat:
                 k: os.path.join(download_path, v)
                 for k, v in asdict(self.config.path).items()
             },
+            gpu_memory_utilization=args.gpu_memory_utilization
         )
         
         if models is None:

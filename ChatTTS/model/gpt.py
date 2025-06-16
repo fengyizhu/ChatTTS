@@ -17,6 +17,7 @@ from transformers.utils import is_flash_attn_2_available
 from ..utils import del_all
 from .embed import Embed
 
+global args
 
 class GPT(nn.Module):
     def __init__(
@@ -25,6 +26,7 @@ class GPT(nn.Module):
         device=torch.device("cpu"),
         device_gpt=torch.device("cpu"),
         logger=logging.getLogger(__name__),
+        gpu_memory_utilization:float=0.9,
     ):
         super().__init__()
 
@@ -39,6 +41,7 @@ class GPT(nn.Module):
         self.num_vq = int(gpt_config["num_vq"])
         self.num_audio_tokens = int(gpt_config["num_audio_tokens"])
         self.num_text_tokens = int(gpt_config["num_text_tokens"])
+        self.gpu_memory_utilization = gpu_memory_utilization
 
     def from_pretrained(
         self, gpt_folder: str, embed_file_path: str, experimental=False
@@ -49,6 +52,7 @@ class GPT(nn.Module):
             num_audio_tokens=self.num_audio_tokens,
             num_text_tokens=self.num_text_tokens,
             post_model_path=embed_file_path,
+            gpu_memory_utilization=self.gpu_memory_utilization,
             dtype="float32"
         )
         self.logger.info("vLLM model loaded")
