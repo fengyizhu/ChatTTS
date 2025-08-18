@@ -476,14 +476,13 @@ class ModelRunner:
         seq_group = {}
         cache_token_ids_group = {}
         for i in seq_group_metadata_list:
-            for j in i.seq_data:
-                seq = i.seq_data[j]
+            for j, seq in i.seq_data.items():
                 seq_group[j] = seq
                 cache_token_ids = i.cache_token_ids
                 cache_token_ids_group[j] = cache_token_ids
-                if i.is_prompt == False and cache_token_ids is not None and 0 < len(seq.output_token_ids) <= len(cache_token_ids):
+                if not i.is_prompt and cache_token_ids is not None and 0 < len(seq.output_token_ids) <= len(cache_token_ids):
                     revert_mode[j] = True
-                elif i.is_prompt == True and cache_token_ids is not None and 0 < len(cache_token_ids) :
+                elif i.is_prompt and cache_token_ids is not None and len(cache_token_ids) > 0:
                     revert_mode[j] = True
                 else:
                     revert_mode[j] = False
@@ -491,55 +490,47 @@ class ModelRunner:
         input_tokens, input_positions, input_metadata, sampling_metadata, speaker_embedding = (
             self.prepare_input_tensors(seq_group_metadata_list)
         )
-        seq_groups = []
-        for i, rtn in enumerate(sampling_metadata.seq_groups):
-            seq_groups.append(rtn[0][0])
 
-        # Execute the model.
-        if len(input_tokens.shape) == 2:
-            input_tokens = input_tokens.unsqueeze(2).repeat(1, 1, 4)
+        seq_groups = [rtn[0][0] for rtn in sampling_metadata.seq_groups]
 
-        text_mask = input_tokens != 0
-        text_mask = text_mask[:, :, 0]
+        # 保证形状一致
+        if input_tokens.ndim == 2:
+            input_tokens = input_tokens.unsqueeze(2).expand(-1, -1, 4)
+
+        text_mask = input_tokens[..., 0] != 0
 
         if input_metadata.use_cuda_graph:
-            graph_batch_size = input_tokens.shape[0]
+            graph_batch_size = input_tokens.size(0)
             model_executable = self.graph_runners[graph_batch_size]
         else:
             model_executable = self.model
 
-        infer_text = sampling_metadata.seq_groups[0][1].infer_text
-        temperture = sampling_metadata.seq_groups[0][1].temperature
-        if not infer_text:
-            temperture = torch.tensor(temperture).to(input_tokens.device)
-        logits_processors, logits_warpers = sampling_metadata.seq_groups[0][
-            1
-        ].logits_processors
-        # print(logits_processors, logits_warpers)
-        min_new_token = sampling_metadata.seq_groups[0][1].min_new_token
-        eos_token = sampling_metadata.seq_groups[0][1].eos_token
-        start_idx = input_tokens[0].shape[0]
-        if input_tokens.shape[-2] == 1:
+        seq_cfg = sampling_metadata.seq_groups[0][1]
+        infer_text = seq_cfg.infer_text
+        # 避免重复创建 GPU tensor
+        temperture = (
+            torch.as_tensor(seq_cfg.temperature, device=input_tokens.device)
+            if not infer_text else seq_cfg.temperature
+        )
+        logits_processors, logits_warpers = seq_cfg.logits_processors
+        min_new_token, eos_token = seq_cfg.min_new_token, seq_cfg.eos_token
+        start_idx = input_tokens.size(1)
+
+        # 构造 embedding
+        if input_tokens.size(-2) == 1:
             if infer_text:
-                speaker_embedding_params: torch.Tensor = self.post_model.emb_text(
-                    input_tokens[:, :, 0]
-                )
+                speaker_embedding_params = self.post_model.emb_text(input_tokens[..., 0])
             else:
                 code_emb = [
-                    self.post_model.emb_code[i](input_tokens[:, :, i])
+                    self.post_model.emb_code[i](input_tokens[..., i])
                     for i in range(self.post_model.num_vq)
                 ]
-                speaker_embedding_params = torch.stack(code_emb, 3).sum(3)
+                speaker_embedding_params = torch.stack(code_emb, dim=3).sum(3)
         else:
-            # 通过for循环，拼接成一个tensor
             if seq_group_metadata_list[0].speaker_embedding_param is not None:
-                speaker_embedding_params = None
-                for i in range(input_tokens.shape[0]):
-                    if speaker_embedding_params is None:
-                        speaker_embedding_params = speaker_embedding[i]
-                    else:
-                        speaker_embedding_params = torch.cat((speaker_embedding_params, speaker_embedding[i]))
-
+                # 收集后一次性拼接，避免循环 cat
+                emb_list = [speaker_embedding[i] for i in range(input_tokens.size(0))]
+                speaker_embedding_params = torch.cat(emb_list, dim=0)
             else:
                 speaker_embedding_params = self.post_model(input_tokens, text_mask)
         hidden_states = model_executable(
@@ -549,18 +540,29 @@ class ModelRunner:
             input_metadata=input_metadata,
         )
 
+        batch_size = input_tokens.size(0)
         results = []
+
+        # 先区分cache模式和正常采样的序列
+        revert_indices, normal_indices = [], []
         for i, val in enumerate(seq_groups):
-            if revert_mode[val] :
-                tmp_hidden_states = hidden_states[i]
-                if input_tokens[i].shape[-2] != 1:
-                    tmp_hidden_states = tmp_hidden_states[-1:, :]
-                result = SequenceGroupOutput(
+            if revert_mode[val]:
+                revert_indices.append((i, val))
+            else:
+                normal_indices.append((i, val))
+
+        for i, val in revert_indices:
+            tmp_hidden_states = hidden_states[i]
+            if input_tokens[i].size(-2) != 1:
+                tmp_hidden_states = tmp_hidden_states[-1:, :]
+            output_token = cache_token_ids_group[val][len(seq_group[val].output_token_ids) - 1]
+            results.append(
+                SequenceGroupOutput(
                     samples=[
                         SequenceOutput(
-                            parent_seq_id=seq_groups[i],
-                            output_token= cache_token_ids_group[val][len(seq_group[val].output_token_ids) - 1],
-                            logprobs={cache_token_ids_group[val][len(seq_group[val].output_token_ids) - 1]:[0,0,0,0]},
+                            parent_seq_id=val,
+                            output_token=output_token,
+                            logprobs={output_token: [0, 0, 0, 0]},
                             hidden_states=tmp_hidden_states,
                             revert_mode=True,
                             finished=False,
@@ -568,51 +570,55 @@ class ModelRunner:
                     ],
                     prompt_logprobs=None,
                 )
-                results.append(result)
-            else:
-                input_tokens = input_tokens[:, :, :]
-                hidden_states = hidden_states[:, :, :]
-                idx_next, logprob, finish = self.sampler.sample(
-                    inputs_ids=input_tokens,
-                    hidden_states=hidden_states,
-                    infer_text=infer_text,
-                    temperature=temperture,
-                    logits_processors=logits_processors,
-                    logits_warpers=logits_warpers,
-                    min_new_token=min_new_token,
-                    now_length=1,
-                    eos_token=eos_token,
-                    start_idx=start_idx,
-                )
-                # print(logprob.shape, idx_next.shape)
-                if len(logprob.shape) == 2:
-                    logprob = logprob[:, None, :]
-                logprob = torch.gather(logprob, -1, idx_next.transpose(-1, -2))[:, :, 0]
-                # print("测试",idx_next.shape, logprob.shape)
-                # Sample the next token.
-                # output = self.model.sample(
-                #     hidden_states=hidden_states,
-                #     sampling_metadata=sampling_metadata,
-                # )
-                idx_next_i = idx_next[i, 0, :].tolist()
-                logprob_i = logprob[i].tolist()
+            )
+
+        if normal_indices:
+            idx_next, logprob, finish = self.sampler.sample(
+                inputs_ids=input_tokens,
+                hidden_states=hidden_states,
+                infer_text=infer_text,
+                temperature=temperture,
+                logits_processors=logits_processors,
+                logits_warpers=logits_warpers,
+                min_new_token=min_new_token,
+                now_length=1,
+                eos_token=eos_token,
+                start_idx=start_idx,
+            )
+
+            if logprob.ndim == 2:
+                logprob = logprob[:, None, :]
+            logprob = torch.gather(logprob, -1, idx_next.transpose(-1, -2))[:, :, 0]
+
+            # ===== 批量搬一次到 CPU，减少 D2H 次数 =====
+            idx_next_cpu = idx_next.cpu()
+            logprob_cpu = logprob.cpu()
+            finish_cpu = finish.cpu()
+
+            # 批量构造结果
+            for i, val in normal_indices:
                 tmp_hidden_states = hidden_states[i]
-                if input_tokens[i].shape[-2] != 1:
+                if input_tokens[i].size(-2) != 1:
                     tmp_hidden_states = tmp_hidden_states[-1:, :]
-                result = SequenceGroupOutput(
-                    samples=[
-                        SequenceOutput(
-                            parent_seq_id=seq_groups[i],
-                            logprobs={tuple(idx_next_i): logprob_i},
-                            output_token=tuple(idx_next_i),
-                            hidden_states=tmp_hidden_states,
-                            revert_mode=False,
-                            finished=finish[i].item(),
-                        ),
-                    ],
-                    prompt_logprobs=None,
+
+                idx_next_i = idx_next_cpu[i, 0, :]
+                logprob_i = logprob_cpu[i]
+                results.append(
+                    SequenceGroupOutput(
+                        samples=[
+                            SequenceOutput(
+                                parent_seq_id=val,
+                                logprobs={tuple(idx_next_i.tolist()): logprob_i.tolist()},
+                                output_token=tuple(idx_next_i.tolist()),
+                                hidden_states=tmp_hidden_states,
+                                revert_mode=False,
+                                finished=bool(finish_cpu[i]),
+                            ),
+                        ],
+                        prompt_logprobs=None,
+                    )
                 )
-                results.append(result)
+
         return results
 
     @torch.inference_mode()
